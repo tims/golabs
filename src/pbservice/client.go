@@ -82,7 +82,6 @@ func (ck *Clerk) Get(key string) string {
 // send a Put or Append RPC
 //
 func (ck *Clerk) PutAppend(key string, value string, op string) {
-
 	// Your code here.
 }
 
