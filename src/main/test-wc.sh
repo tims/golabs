@@ -1,4 +1,5 @@
 #!/bin/bash
+set -e 
 go run wc.go master kjv12.txt sequential
 sort -n -k2 mrtmp.kjv12.txt | tail -10 | diff - mr-testout.txt > diff.out
 if [ -s diff.out ]
