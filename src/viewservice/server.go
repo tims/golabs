@@ -16,21 +16,42 @@ type ViewServer struct {
   rpccount int32 // for testing
   me       string
 
-  // Your declarations here.
+                 // Your declarations here.
   current  View
-
-  servers map[string]time.Time
+  servers  map[string]time.Time
+  acks     map[string]uint
 }
 
+func (vs *ViewServer) ack(server string, viewnum uint) {
+  vs.acks[server] = viewnum;
+}
 
+func (vs *ViewServer) isAcked() bool {
+  ack, ok := vs.acks[vs.current.Primary]
+  return !ok || ack == vs.current.Viewnum
+}
+
+func (vs *ViewServer) isServerAcked(server string) bool {
+  ack, ok := vs.acks[server]
+  return ok && ack == vs.current.Viewnum
+}
 
 //
 // server Ping RPC handler.
 //
 func (vs *ViewServer) Ping(args *PingArgs, reply *PingReply) error {
+  if args.Viewnum == vs.current.Viewnum {
+    vs.ack(args.Me, args.Viewnum)
+  } else if args.Viewnum < vs.acks[args.Me] {
+    vs.ack(args.Me, args.Viewnum)
+  }
+
   if vs.current.Viewnum == 0 {
+    // set primary if we are at the very first view
     vs.current = View{Viewnum: 1, Primary: args.Me, Backup: ""}
+    vs.ack(args.Me, 0)
   } else if vs.current.Primary != args.Me && vs.current.Backup == "" {
+    // set backup if we don't have a backup
     vs.current.Viewnum += 1
     vs.current.Backup = args.Me
   }
@@ -48,10 +69,25 @@ func (vs *ViewServer) Get(args *GetArgs, reply *GetReply) error {
   return nil
 }
 
-
-func isDead(vs * ViewServer, server string) bool {
+func (vs *ViewServer) isWorkerDead(server string) bool {
   var lastSeen, ok = vs.servers[server]
   return ok && time.Since(lastSeen) > DeadPings * PingInterval
+}
+
+func (vs *ViewServer) getLiveTertiaryServer() string {
+  for tertiary, _ := range (vs.servers) {
+    if vs.current.Primary != tertiary && vs.current.Backup != tertiary && !vs.isWorkerDead(tertiary) {
+      return tertiary
+    }
+  }
+  return ""
+}
+
+func (vs *ViewServer) getNextPrimaryServer() string {
+  if !vs.isWorkerDead(vs.current.Backup) && vs.isServerAcked(vs.current.Backup) {
+    return vs.current.Backup
+  }
+  return ""
 }
 
 //
@@ -60,20 +96,32 @@ func isDead(vs * ViewServer, server string) bool {
 // accordingly.
 //
 func (vs *ViewServer) tick() {
-  for server, pings := range vs.servers {
-    fmt.Println(server, pings)
-  }
-  // Your code here.
+  // Your code here
 
-  if isDead(vs, vs.current.Primary) {
-    vs.current.Primary = vs.current.Backup
-    vs.current.Backup = ""
-    for tertiary, _ := range(vs.servers) {
-      if vs.current.Primary != tertiary && !isDead(vs, tertiary) {
-        vs.current.Backup = tertiary
+  // if the backup is dead evict it, and replace it if possible
+  if vs.isWorkerDead(vs.current.Backup) {
+    // replace worker if we can
+    vs.current.Backup = vs.getLiveTertiaryServer()
+    vs.current.Viewnum += 1
+  }
+
+
+  if vs.isAcked() {
+    // if primary is acked and but has died and the backup is good, replace the primary with the backup
+    if vs.isWorkerDead(vs.current.Primary) {
+      newPrimary := vs.getNextPrimaryServer() // get the backup if it's good.
+      if newPrimary != "" {
+        fmt.Println("Primary is dead, replacing with", newPrimary)
+        vs.current.Primary = newPrimary
+        newBackup := vs.getLiveTertiaryServer() // get a new backup if possible
+        fmt.Println("Backup moved to primary, new backup is", newBackup)
+        vs.current.Backup = newBackup
+        vs.current.Viewnum += 1
       }
     }
-    vs.current.Viewnum += 1
+  } else if vs.acks[vs.current.Primary] == 0 && vs.current.Viewnum > 0 {
+    //Primary has restarted, swap with the backup
+    vs.current = View{Viewnum: vs.current.Viewnum + 1, Primary: vs.current.Backup, Backup: vs.current.Primary}
   }
 }
 
@@ -104,6 +152,7 @@ func StartServer(me string) *ViewServer {
   vs.me = me
   // Your vs.* initializations here.
   vs.servers = map[string]time.Time{}
+  vs.acks = map[string]uint{}
 
   // tell net/rpc about our RPC server and handlers.
   rpcs := rpc.NewServer()

@@ -92,7 +92,6 @@ func Test1(t *testing.T) {
 			}
 			time.Sleep(PingInterval)
 		}
-		fmt.Println(vs.current)
 		check(t, ck2, ck2.me, "", vx.Viewnum+1)
 	}
 	fmt.Printf("  ... Passed\n")
