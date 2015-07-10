@@ -119,7 +119,7 @@ func (vs *ViewServer) tick() {
         vs.current.Viewnum += 1
       }
     }
-  } else if vs.acks[vs.current.Primary] == 0 && vs.current.Viewnum > 0 {
+  } else if vs.acks[vs.current.Primary] == 0 && vs.current.Viewnum > 0 && vs.isServerAcked(vs.current.Backup) {
     //Primary has restarted, swap with the backup
     vs.current = View{Viewnum: vs.current.Viewnum + 1, Primary: vs.current.Backup, Backup: vs.current.Primary}
   }
